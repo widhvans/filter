@@ -1,4 +1,4 @@
-# bot.py
+# bot.py (Fixed Version)
 
 import logging
 import re
@@ -21,18 +21,14 @@ def filter_movie_name(raw_text: str) -> str:
     यह फ़ंक्शन रॉ टेक्स्ट में से मूवी का नाम फ़िल्टर करता है।
     """
     # 1. ब्रैकेट () और [] में मौजूद किसी भी चीज़ को हटा दें (जैसे साल, भाषा)
-    # उदाहरण: "(2023)", "[Hindi]"
     text = re.sub(r'[\(\[].*?[\)\]]', '', raw_text)
 
     # 2. सामान्य कीवर्ड और क्वालिटी टैग्स को हटा दें (case-insensitive)
-    # उदाहरण: "1080p", "720p", "BluRay", "WEBRip", "x264"
     unwanted_keywords = [
         '1080p', '720p', '480p', '4k', 'bluray', 'web-dl', 'hdrip', 'webrip', 'hdtv',
         'x264', 'x265', 'hevc', 'aac', 'dd5.1', 'dual audio', 'hindi', 'english',
         'telugu', 'tamil', 'multi'
     ]
-    # regex पैटर्न बनाएं: \b(word1|word2|...)\b
-    # \b यह सुनिश्चित करता है कि पूरा शब्द मैच हो
     pattern = r'\b(' + '|'.join(unwanted_keywords) + r')\b'
     text = re.sub(pattern, '', text, flags=re.IGNORECASE)
 
@@ -55,33 +51,45 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"मुझे कोई भी मूवी का नाम भेजें (जैसे: Jawan (2023) [Hindi] 1080p) और मैं उसे साफ़ करके आपको दूँगा।",
     )
 
+# ######################################################################
+# ##               यहाँ बदलाव किया गया है (CHANGES ARE HERE)           ##
+# ######################################################################
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """टेक्स्ट मैसेज को हैंडल करता है।"""
-    user_message = update.message.text
-    logger.info(f"User '{update.effective_user.first_name}' sent: {user_message}")
+    """टेक्स्ट मैसेज को हैंडल करता है, जिसमें एडिट किए गए मैसेज और चैनल पोस्ट भी शामिल हैं।"""
+    # स्टेप 1: सही मैसेज ऑब्जेक्ट को ढूंढें
+    # यह या तो नया मैसेज (update.message) हो सकता है, एडिट किया गया मैसेज (update.edited_message),
+    # या चैनल पोस्ट (update.channel_post)
+    message = update.message or update.edited_message or update.channel_post
+
+    # स्टेप 2: जांचें कि मैसेज और उसमें टेक्स्ट मौजूद है या नहीं
+    # अगर नहीं, तो फंक्शन से बाहर निकल जाएं ताकि कोई एरर न आए
+    if not message or not message.text:
+        logger.info("Received an update without processable text, ignoring.")
+        return
+
+    user_message = message.text
+    logger.info(f"Received text: {user_message}")
 
     # मूवी का नाम फ़िल्टर करें
     cleaned_name = filter_movie_name(user_message)
 
     if cleaned_name:
         logger.info(f"Filtered name: {cleaned_name}")
-        await update.message.reply_text(f"`{cleaned_name}`", parse_mode='MarkdownV2')
+        # जवाब देने के लिए `message.reply_text` का उपयोग करें
+        # ताकि यह सही चैट (नए मैसेज, एडिटेड मैसेज या चैनल पोस्ट) में जवाब दे
+        await message.reply_text(f"`{cleaned_name}`", parse_mode='MarkdownV2')
     else:
-        logger.warning("Could not extract a valid name.")
-        await update.message.reply_text("माफ़ करें, मुझे इस टेक्स्ट में से कोई मान्य नाम नहीं मिला।")
+        logger.warning("Could not extract a valid name from the text.")
+        await message.reply_text("माफ़ करें, मुझे इस टेक्स्ट में से कोई मान्य नाम नहीं मिला।")
 
 def main() -> None:
     """बॉट को स्टार्ट करता है।"""
-    # एप्लीकेशन बनाएं
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
-    # कमांड हैंडलर जोड़ें
     application.add_handler(CommandHandler("start", start))
-
-    # मैसेज हैंडलर जोड़ें (यह कमांड के अलावा सभी टेक्स्ट मैसेज पर चलेगा)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    # बॉट को चलाना शुरू करें
     logger.info("Starting bot...")
     application.run_polling()
 
