@@ -1,7 +1,8 @@
-# bot.py (Fixed Version 2)
+# bot.py (PEAK PERFORMANCE VERSION)
 
 import logging
 import re
+import PTN  # यह हमारी नई शक्तिशाली लाइब्रेरी है
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
@@ -15,76 +16,81 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# इन कीवर्ड्स को ग्लोबल बना दें ताकि दोनों फंक्शन्स में इस्तेमाल हो सकें
-UNWANTED_KEYWORDS = [
-    '1080p', '720p', '480p', '2160p', '4k', 'bluray', 'blu-ray', 'web-dl', 'hdrip', 
-    'webrip', 'hdtv', 'x264', 'x265', 'hevc', 'aac', 'dd5.1', 'dual audio', 'hindi',
-    'english', 'telugu', 'tamil', 'multi', 'subbed', 'dubbed'
-]
 
-def filter_movie_name(raw_text: str) -> str:
-    """यह फ़ंक्शन रॉ टेक्स्ट में से मूवी का नाम फ़िल्टर करता है।"""
-    text = raw_text
-    
-    # 1. ब्रैकेट () और [] में मौजूद किसी भी चीज़ को हटा दें
-    text = re.sub(r'[\(\[].*?[\)\]]', '', text)
+def get_clean_title(raw_text: str) -> str:
+    """
+    parse-torrent-name (PTN) लाइब्रेरी का उपयोग करके साफ़ टाइटल निकालता है।
+    यह अब तक का सबसे प्रभावी तरीका है।
+    """
+    try:
+        # PTN लाइब्रेरी से टेक्स्ट को पार्स करें
+        parsed_info = PTN.parse(raw_text)
 
-    # 2. सामान्य कीवर्ड और क्वालिटी टैग्स को हटा दें
-    pattern = r'\b(' + '|'.join(UNWANTED_KEYWORDS) + r')\b'
-    text = re.sub(pattern, '', text, flags=re.IGNORECASE)
+        # टाइटल निकालें
+        title = parsed_info.get('title', '')
+        
+        # अगर यह एक टीवी शो है, तो सीजन, एपिसोड और एपिसोड का नाम जोड़ें
+        if 'season' in parsed_info and 'episode' in parsed_info:
+            season = parsed_info.get('season')
+            episode = parsed_info.get('episode')
+            
+            # S01E05 जैसा फॉर्मेट बनाएं
+            title_with_episode = f"{title} S{str(season).zfill(2)}E{str(episode).zfill(2)}"
+            
+            # यदि एपिसोड का नाम मौजूद है, तो उसे भी जोड़ें
+            episode_name = parsed_info.get('episodeName')
+            if episode_name:
+                return f"{title_with_episode} {episode_name}".strip()
+            else:
+                return title_with_episode.strip()
 
-    # 3. डॉट्स, अंडरस्कोर को स्पेस से बदलें
-    text = text.replace('.', ' ').replace('_', ' ')
+        # अगर यह एक मूवी है, तो सिर्फ टाइटल लौटाएं
+        return title.strip()
+        
+    except Exception as e:
+        logger.error(f"Error parsing with PTN: {e}")
+        # अगर PTN फेल हो जाता है, तो एक बेसिक क्लीनअप करें
+        # साल और ब्रैकेट हटाएं
+        text = re.sub(r'[\(\[].*?[\)\]]', '', raw_text)
+        # पहले известная техническая информация
+        match = re.split(r'720p|1080p|4k|web-dl|bluray|hdrip', text, flags=re.IGNORECASE)
+        return match[0].replace('.', ' ').strip() if match else text.strip()
 
-    # 4. विशेष सिंबल हटा दें
-    text = re.sub(r'[^\w\s]', '', text)
-
-    # 5. अतिरिक्त स्पेस को हटा दें
-    cleaned_name = ' '.join(text.split()).strip()
-
-    return cleaned_name
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/start कमांड का जवाब देता है।"""
     user = update.effective_user
     await update.message.reply_html(
         f"नमस्ते {user.mention_html()}!\n\n"
-        f"मुझे कोई भी मूवी का नाम भेजें और मैं उसे साफ़ करके आपको दूँगा।",
+        f"मुझे कोई भी मूवी/शो का फ़ाइलनेम भेजें और मैं आपको उसका बिल्कुल साफ़ नाम दूँगा।",
     )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """इनकमिंग मैसेज को हैंडल करता है।"""
     message = update.message or update.edited_message or update.channel_post
 
-    # ## --- यहाँ सुधार किए गए हैं --- ##
-
-    # 1. अगर मैसेज में टेक्स्ट नहीं है या मैसेज किसी दूसरे बॉट का है तो उसे अनदेखा करें
+    # अगर मैसेज में टेक्स्ट नहीं है या मैसेज किसी दूसरे बॉट का है तो उसे अनदेखा करें
     if not message or not message.text or (message.from_user and message.from_user.is_bot):
         return
 
     user_message = message.text
-    
-    # 2. जांचें कि क्या मैसेज में मूवी से संबंधित कोई कीवर्ड है।
-    #    इससे बॉट सामान्य बातचीत का जवाब नहीं देगा।
-    #    `r'\b\d{4}\b'` साल (जैसे 2023) की जांच करता है।
-    contains_movie_keyword = any(re.search(r'\b' + re.escape(keyword) + r'\b', user_message, re.IGNORECASE) for keyword in UNWANTED_KEYWORDS)
-    contains_year = re.search(r'\b\d{4}\b', user_message)
-
-    if not contains_movie_keyword and not contains_year:
-        logger.info(f"Ignoring general chat message: {user_message[:50]}...")
-        return
-        
-    # ## --- सुधार समाप्त --- ##
-
     logger.info(f"Processing text: {user_message[:100]}")
 
-    cleaned_name = filter_movie_name(user_message)
+    # हमारे नए शक्तिशाली फ़ंक्शन का उपयोग करें
+    cleaned_name = get_clean_title(user_message)
 
     if cleaned_name:
         logger.info(f"Filtered name: {cleaned_name}")
+        
+        # उपयोगकर्ता के अनुरोध के अनुसार हेडर जोड़ें
+        response_text = (
+            f"Here is your cleared text:\n\n"
+            f"**{cleaned_name}**"
+        )
+        
         try:
-            # Markdown का उपयोग करने से बचें ताकि कोई एरर न आए
-            await message.reply_text(cleaned_name)
+            # Markdown फॉर्मेट में जवाब भेजें
+            await message.reply_text(response_text, parse_mode='Markdown')
         except Exception as e:
             logger.error(f"Failed to send message: {e}")
     else:
@@ -99,7 +105,7 @@ def main() -> None:
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     logger.info("Starting bot...")
-    application.run_polling(drop_pending_updates=True) # पुरानी पेंडिंग अपडेट्स को हटा दें
+    application.run_polling(drop_pending_updates=True)
 
 if __name__ == '__main__':
     main()
